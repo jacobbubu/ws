@@ -3,4 +3,9 @@ node_modules
 .*.swp
 .lock-*
 build
+<<<<<<< HEAD
 builderror.log
+=======
+
+builderror.log
+>>>>>>> upstream/master

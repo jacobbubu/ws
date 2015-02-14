@@ -60,8 +60,12 @@ describe('WebSocketServer', function() {
     });
 
     it('emits an error if http server bind fails', function(done) {
-      var wss = new WebSocketServer({port: 1});
-      wss.on('error', function() { done(); });
+      var wss1 = new WebSocketServer({port: 50003});
+      var wss2 = new WebSocketServer({port: 50003});
+      wss2.on('error', function() {
+        wss1.close();
+        done();
+      });
     });
 
     it('starts a server on a given port', function(done) {
@@ -88,20 +92,23 @@ describe('WebSocketServer', function() {
       });
     });
 
-    it('uses a precreated http server listening on unix socket', function (done) {
-      var srv = http.createServer();
-      var sockPath = '/tmp/ws_socket_'+new Date().getTime()+'.'+Math.floor(Math.random() * 1000);
-      srv.listen(sockPath, function () {
-        var wss = new WebSocketServer({server: srv});
-        var ws = new WebSocket('ws+unix://'+sockPath);
+    // Don't test this on Windows. It throws errors for obvious reasons.
+    if(!/^win/i.test(process.platform)) {
+      it('uses a precreated http server listening on unix socket', function (done) {
+        var srv = http.createServer();
+        var sockPath = '/tmp/ws_socket_'+new Date().getTime()+'.'+Math.floor(Math.random() * 1000);
+        srv.listen(sockPath, function () {
+          var wss = new WebSocketServer({server: srv});
+          var ws = new WebSocket('ws+unix://'+sockPath);
 
-        wss.on('connection', function(client) {
-          wss.close();
-          srv.close();
-          done();
+          wss.on('connection', function(client) {
+            wss.close();
+            srv.close();
+            done();
+          });
         });
       });
-    });
+    }
 
     it('emits path specific connection event', function (done) {
       var srv = http.createServer();
@@ -679,7 +686,7 @@ describe('WebSocketServer', function() {
 
       it('selects the first protocol by default', function(done) {
         var wss = new WebSocketServer({port: ++port}, function() {
-          var ws = new WebSocket('ws://localhost:' + port, {protocol: 'prot1, prot2'});
+          var ws = new WebSocket('ws://localhost:' + port, ['prot1', 'prot2']);
           ws.on('open', function(client) {
               ws.protocol.should.eql('prot1');
               wss.close();
@@ -691,7 +698,7 @@ describe('WebSocketServer', function() {
       it('selects the last protocol via protocol handler', function(done) {
         var wss = new WebSocketServer({port: ++port, handleProtocols: function(ps, cb) {
             cb(true, ps[ps.length-1]); }}, function() {
-          var ws = new WebSocket('ws://localhost:' + port, {protocol: 'prot1, prot2'});
+          var ws = new WebSocket('ws://localhost:' + port, ['prot1', 'prot2']);
           ws.on('open', function(client) {
               ws.protocol.should.eql('prot2');
               wss.close();
@@ -703,7 +710,7 @@ describe('WebSocketServer', function() {
       it('client detects invalid server protocol', function(done) {
         var wss = new WebSocketServer({port: ++port, handleProtocols: function(ps, cb) {
             cb(true, 'prot3'); }}, function() {
-          var ws = new WebSocket('ws://localhost:' + port, {protocol: 'prot1, prot2'});
+          var ws = new WebSocket('ws://localhost:' + port, ['prot1', 'prot2']);
           ws.on('open', function(client) {
               done(new Error('connection must not be established'));
           });
@@ -716,7 +723,7 @@ describe('WebSocketServer', function() {
       it('client detects no server protocol', function(done) {
         var wss = new WebSocketServer({port: ++port, handleProtocols: function(ps, cb) {
             cb(true); }}, function() {
-          var ws = new WebSocket('ws://localhost:' + port, {protocol: 'prot1, prot2'});
+          var ws = new WebSocket('ws://localhost:' + port, ['prot1', 'prot2']);
           ws.on('open', function(client) {
               done(new Error('connection must not be established'));
           });
@@ -729,7 +736,7 @@ describe('WebSocketServer', function() {
       it('client refuses server protocols', function(done) {
         var wss = new WebSocketServer({port: ++port, handleProtocols: function(ps, cb) {
             cb(false); }}, function() {
-          var ws = new WebSocket('ws://localhost:' + port, {protocol: 'prot1, prot2'});
+          var ws = new WebSocket('ws://localhost:' + port, ['prot1', 'prot2']);
           ws.on('open', function(client) {
               done(new Error('connection must not be established'));
           });
@@ -737,6 +744,36 @@ describe('WebSocketServer', function() {
               done();
           });
         });
+      });
+
+      it('server detects unauthorized protocol handler', function(done) {
+        var wss = new WebSocketServer({port: ++port, handleProtocols: function(ps, cb) {
+          cb(false);
+        }}, function() {
+          var options = {
+            port: port,
+            host: '127.0.0.1',
+            headers: {
+              'Connection': 'Upgrade',
+              'Upgrade': 'websocket',
+              'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+              'Sec-WebSocket-Version': 13,
+              'Sec-WebSocket-Origin': 'http://foobar.com'
+            }
+          };
+          options.port = port;
+          var req = http.request(options);
+          req.end();
+          req.on('response', function(res) {
+            res.statusCode.should.eql(401);
+            wss.close();
+            done();
+          });
+        });
+        wss.on('connection', function(ws) {
+          done(new Error('connection must not be established'));
+        });
+        wss.on('error', function() {});
       });
 
       it('server detects invalid protocol handler', function(done) {
@@ -765,6 +802,30 @@ describe('WebSocketServer', function() {
         });
         wss.on('connection', function(ws) {
           done(new Error('connection must not be established'));
+        });
+        wss.on('error', function() {});
+      });
+
+      it('accept connections with sec-websocket-extensions', function(done) {
+        var wss = new WebSocketServer({port: ++port}, function() {
+          var options = {
+            port: port,
+            host: '127.0.0.1',
+            headers: {
+              'Connection': 'Upgrade',
+              'Upgrade': 'websocket',
+              'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+              'Sec-WebSocket-Version': 13,
+              'Sec-WebSocket-Extensions': 'permessage-foo; x=10'
+            }
+          };
+          var req = http.request(options);
+          req.end();
+        });
+        wss.on('connection', function(ws) {
+          ws.terminate();
+          wss.close();
+          done();
         });
         wss.on('error', function() {});
       });
@@ -1143,7 +1204,7 @@ describe('WebSocketServer', function() {
   describe('client properties', function() {
     it('protocol is exposed', function(done) {
       var wss = new WebSocketServer({port: ++port}, function() {
-        var ws = new WebSocket('ws://localhost:' + port, {protocol: 'hi'});
+        var ws = new WebSocket('ws://localhost:' + port, 'hi');
       });
       wss.on('connection', function(client) {
         client.protocol.should.eql('hi');
@@ -1175,4 +1236,83 @@ describe('WebSocketServer', function() {
     });
   });
 
+  describe('permessage-deflate', function() {
+    it('accept connections with permessage-deflate extension', function(done) {
+      var wss = new WebSocketServer({port: ++port}, function() {
+        var options = {
+          port: port,
+          host: '127.0.0.1',
+          headers: {
+            'Connection': 'Upgrade',
+            'Upgrade': 'websocket',
+            'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+            'Sec-WebSocket-Version': 13,
+            'Sec-WebSocket-Extensions': 'permessage-deflate; client_max_window_bits=8; server_max_window_bits=8; client_no_context_takeover; server_no_context_takeover'
+          }
+        };
+        var req = http.request(options);
+        req.end();
+      });
+      wss.on('connection', function(ws) {
+        ws.terminate();
+        wss.close();
+        done();
+      });
+      wss.on('error', function() {});
+    });
+
+    it('does not accept connections with not defined extension parameter', function(done) {
+      var wss = new WebSocketServer({port: ++port}, function() {
+        var options = {
+          port: port,
+          host: '127.0.0.1',
+          headers: {
+            'Connection': 'Upgrade',
+            'Upgrade': 'websocket',
+            'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+            'Sec-WebSocket-Version': 13,
+            'Sec-WebSocket-Extensions': 'permessage-deflate; foo=15'
+          }
+        };
+        var req = http.request(options);
+        req.end();
+        req.on('response', function(res) {
+          res.statusCode.should.eql(400);
+          wss.close();
+          done();
+        });
+      });
+      wss.on('connection', function(ws) {
+        done(new Error('connection must not be established'));
+      });
+      wss.on('error', function() {});
+    });
+
+    it('does not accept connections with invalid extension parameter', function(done) {
+      var wss = new WebSocketServer({port: ++port}, function() {
+        var options = {
+          port: port,
+          host: '127.0.0.1',
+          headers: {
+            'Connection': 'Upgrade',
+            'Upgrade': 'websocket',
+            'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+            'Sec-WebSocket-Version': 13,
+            'Sec-WebSocket-Extensions': 'permessage-deflate; server_max_window_bits=foo'
+          }
+        };
+        var req = http.request(options);
+        req.end();
+        req.on('response', function(res) {
+          res.statusCode.should.eql(400);
+          wss.close();
+          done();
+        });
+      });
+      wss.on('connection', function(ws) {
+        done(new Error('connection must not be established'));
+      });
+      wss.on('error', function() {});
+    });
+  });
 });

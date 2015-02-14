@@ -11,6 +11,7 @@ This class is a WebSocket server. It is an `EventEmitter`.
   * `port` Number
   * `server` http.Server
   * `verifyClient` Function
+  * `handleProtocols` Function
   * `path` String
   * `noServer` Boolean
   * `disableHixie` Boolean
@@ -23,7 +24,36 @@ Either `port` or `server` must be provided, otherwise you might enable
 `noServer` if you want to pass the requests directly. Please note that the
 `callback` is only used when you supply the a `port` number in the options.
 
-### server.close([code], [data])
+### options.verifyClient
+
+`verifyClient` can be used in two different ways. If it is provided with two arguments then those are:
+* `info` Object:
+  * `origin` String: The value in the Origin header indicated by the client.
+  * `req` http.ClientRequest: The client HTTP GET request.
+  * `secure` Boolean: `true` if `req.connection.authorized` or `req.connection.encypted` is set.
+* `cb` Function: A callback that must be called by the user upon inspection of the `info` fields. Arguments in this callback are:
+  * `result` Boolean: Whether the user accepts or not the handshake.
+  * `code` Number: If `result` is `false` this field determines the HTTP error status code to be sent to the client.
+  * `name` String: If `result` is `false` this field determines the HTTP reason phrase.
+
+If `verifyClient` is provided with a single argument then that is:
+* `info` Object: Same as above.
+
+In this case the return code (Boolean) of the function determines whether the handshake is accepted or not.
+
+If `verifyClient` is not set then the handshake is automatically accepted.
+
+### options.handleProtocols
+
+`handleProtocols` receives two arguments:
+* `protocols` Array: The list of WebSocket sub-protocols indicated by the client in the Sec-WebSocket-Protocol header.
+* `cb` Function: A callback that must be called by the user upon inspection of the protocols. Arguments in this callback are:
+  * `result` Boolean: Whether the user accepts or not the handshake.
+  * `protocol` String: If `result` is `true` then this field sets the value of the Sec-WebSocket-Protocol header in the HTTP 101 response.
+
+If `handleProtocols` is not set then the handshake is accepted regardless the value of Sec-WebSocket-Protocol header. If it is set but the user does not invoke the `cb` callback then the handshake is rejected with error HTTP 501.
+
+### server.close()
 
 Close the server and terminate all clients
 
@@ -97,6 +127,10 @@ The URL of the WebSocket server (only for clients)
 
 Describes the feature of the used protocol version. E.g. `supports.binary` is a boolean that describes if the connection supports binary messages.
 
+### websocket.upgradeReq
+
+The http request that initiated the upgrade. Useful for parsing authorty headers, cookie headers and other information to associate a specific Websocket to a specific Client. This is only available for WebSockets constructed by a Server.
+
 ### websocket.close([code], [data])
 
 Gracefully closes the connection, after sending a description message
@@ -120,7 +154,7 @@ Resume the client stream
 
 ### websocket.send(data, [options], [callback])
 
-Sends `data` through the connection. `options` can be an object with members `mask` and `binary`. The optional `callback` is executed after the send completes.
+Sends `data` through the connection. `options` can be an object with members `mask`, `binary` and `compress`. The optional `callback` is executed after the send completes.
 
 ### websocket.stream([options], callback)
 
@@ -178,4 +212,3 @@ Is emitted when a pong is received. `flags` is an object with member `binary`.
 `function () { }`
 
 Emitted when the connection is established.
-
